@@ -326,3 +326,167 @@ print(f"  OK  PIB Brasil 2025→2030: {proj_br[0].pib:.3f}T → {proj_br[-1].pib
 
 print()
 print("✓ Todos os testes passaram")
+
+
+# =============================================================================
+# CÉLULA 11 — Busca em tempo real via Banco Mundial (requer internet no Colab)
+# =============================================================================
+# Instale apenas se ainda não tiver (urllib já vem no Python stdlib):
+#   !pip install -q requests   ← NÃO necessário; usamos urllib puro
+
+import json, math, threading, urllib.request
+from typing import Optional, Dict
+
+WB_BASE = (
+    "https://api.worldbank.org/v2/country/{iso}/indicator/{ind}"
+    "?format=json&mrv=3&per_page=3"
+)
+
+INDICADORES_COLAB = {
+    "density":    "EN.POP.DNST",
+    "gini":       "SI.POV.GINI",
+    "fertility":  "SP.DYN.TFRT.IN",
+    "schooling":  "SE.SCH.LIFE",
+    "imports":    "NE.IMP.GNFS.ZS",
+    "exports":    "NE.EXP.GNFS.ZS",
+    "manuf_exp":  "TX.VAL.MANF.ZS.UN",
+    "hitech":     "TX.VAL.MRCH.HI.ZS",
+    "gdp":        "NY.GDP.MKTP.CD",
+    "inflation":  "FP.CPI.TOTL.ZG",
+    "patents":    "IP.PAT.RESD",
+    "population": "SP.POP.TOTL",
+    "urban":      "SP.URB.TOTL.IN.ZS",
+    "gni_pc":     "NY.GNP.PCAP.CD",
+    "tot":        "TT.PRI.MRCH.XD.WD",
+}
+
+PAIS_ISO_COLAB = {
+    "brasil": "BRA", "brazil": "BRA",
+    "alemanha": "DEU", "germany": "DEU",
+    "venezuela": "VEN",
+}
+
+
+def _wb_get_colab(iso: str, indicator: str, timeout: int = 10) -> Optional[float]:
+    url = WB_BASE.format(iso=iso.upper(), ind=indicator)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ModeloS/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            if len(payload) < 2 or not payload[1]:
+                return None
+            for rec in payload[1]:
+                if rec.get("value") is not None:
+                    return float(rec["value"])
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_todos_colab(iso: str) -> Dict[str, Optional[float]]:
+    resultados: Dict[str, Optional[float]] = {}
+    lock = threading.Lock()
+
+    def _worker(nome, ind):
+        val = _wb_get_colab(iso, ind)
+        with lock:
+            resultados[nome] = val
+
+    threads = [threading.Thread(target=_worker, args=(k, v), daemon=True)
+               for k, v in INDICADORES_COLAB.items()]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+    return resultados
+
+
+def _mapear_colab(iso: str, nome_pais: str, d: Dict[str, Optional[float]]) -> PaisData:
+    def v(key, fallback=None):
+        val = d.get(key)
+        return val if val is not None else fallback
+
+    gni_pc   = v("gni_pc",   10_000)
+    density  = v("density",  50.0)
+    gini     = v("gini",     40.0)
+    urban    = v("urban",    60.0)
+    patents  = v("patents",  0.0)
+    pop      = v("population", 1e7)
+    manuf    = v("manuf_exp", 30.0)
+    exp_pct  = v("exports",  20.0)
+    imp_pct  = v("imports",  20.0)
+    hitech   = v("hitech",   10.0)
+    tot_idx  = v("tot",      100.0)
+    gdp      = v("gdp",      1e12)
+    inf_pct  = v("inflation", 3.0)
+
+    return PaisData(
+        nome=nome_pais, ano=2024,
+        M=round(min(1.0, max(0.0, gni_pc / 80_000)), 4),
+        lD=round(math.log10(max(density, 0.1)), 4),
+        G=round(gini / 100.0, 4),
+        TFR=round(v("fertility", 2.0), 3),
+        E=round(v("schooling", 8.0), 2),
+        C=round(min(1.0, urban / 100.0), 3),
+        I=0.30,
+        P=round(min(5.0, (patents / max(pop, 1)) * 1e6), 4),
+        S=0.05, lG=1.0, N=0.02,
+        NL=round(min(1.0, urban / 100.0), 3),
+        EXM=round(min(1.0, (manuf / 100.0) * (exp_pct / 100.0)), 4),
+        EXS=round(min(1.0, hitech / 100.0), 4),
+        TOT=round(tot_idx / 100.0, 3),
+        GVC=round(min(1.0, (exp_pct + imp_pct) / 200.0), 4),
+        EXC=0.25, CCO=0.30,
+        IMD=round(min(1.0, imp_pct / 100.0), 4),
+        pib=round(gdp / 1e12, 3),
+        inflacao=round(max(0.0, inf_pct / 100.0), 4),
+    )
+
+
+def buscar_pais_colab(nome: str) -> PaisData:
+    iso = PAIS_ISO_COLAB.get(nome.lower(), nome.upper()[:3])
+    print(f"\n[WB] Buscando {nome.title()} (ISO={iso})...")
+    raw = _fetch_todos_colab(iso)
+    dados = _mapear_colab(iso, nome.title(), raw)
+    ok = sum(1 for val in raw.values() if val is not None)
+    print(f"[WB] {ok}/{len(INDICADORES_COLAB)} indicadores obtidos")
+    return dados
+
+
+print("OK — funções de busca em tempo real carregadas")
+print("     Rode a CÉLULA 12 para buscar e calcular o SS ao vivo.")
+
+
+# =============================================================================
+# CÉLULA 12 — Calcular SS com dados ao vivo do Banco Mundial
+# =============================================================================
+print("\n" + "="*60)
+print("  SS EM TEMPO REAL — BANCO MUNDIAL")
+print("="*60)
+
+paises_live = ["brasil", "alemanha", "venezuela"]
+resultados_live = []
+
+for nome in paises_live:
+    try:
+        dados_live = buscar_pais_colab(nome)
+        ss_live    = calcular_ss(dados_live)
+        cls_live, risco_live = classificar_ss(ss_live)
+        resultados_live.append((dados_live, ss_live, cls_live, risco_live))
+        print(f"\n  {dados_live.nome} ({dados_live.ano})")
+        print(f"    PIB:      ${dados_live.pib:.2f} T")
+        print(f"    Inflação: {dados_live.inflacao*100:.1f}%")
+        print(f"    Gini:     {dados_live.G:.3f}")
+        print(f"    TFR:      {dados_live.TFR:.2f}")
+        print(f"    Escola:   {dados_live.E:.1f} anos")
+        print(f"    ► SS = {ss_live:.4f}  |  {cls_live}  |  {risco_live}")
+    except Exception as exc:
+        print(f"  ERRO ao buscar {nome}: {exc}")
+
+print("\n" + "="*60)
+print(f"  {'PAÍS':<12} {'SS (live)':>10}  {'CLASSE'}")
+print("="*60)
+for dados_live, ss_live, cls_live, _ in sorted(resultados_live,
+                                                key=lambda t: t[1], reverse=True):
+    print(f"  {dados_live.nome:<12} {ss_live:>10.4f}  {cls_live}")
+print("="*60)

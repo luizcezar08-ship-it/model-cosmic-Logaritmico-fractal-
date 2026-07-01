@@ -5,7 +5,7 @@ package.domain = org.modelos
 
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json
-source.include_patterns = modelo_s.py,main.py
+source.include_patterns = modelo_s.py,main.py,fetch_data.py
 
 version = 1.0.0
 

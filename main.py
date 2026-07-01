@@ -6,6 +6,7 @@ Interface Kivy para cálculo do Índice de Estabilidade Socioeconômica.
 import math
 
 from kivy.app import App
+from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.lang import Builder
 from kivy.metrics import dp
@@ -28,6 +29,7 @@ from modelo_s import (
     classificar_ss,
     projetar_cenario,
 )
+from fetch_data import buscar_pais_async
 
 # ── Paleta ────────────────────────────────────────────────────────────
 BG      = (0.05, 0.11, 0.17, 1)   # navy escuro
@@ -250,6 +252,26 @@ KV_MENU = """
             canvas.before:
                 Color:
                     rgba: 0.28, 0.16, 0.06, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [dp(12)]
+
+        Widget:
+            size_hint_y: None
+            height: dp(8)
+
+        # Dados em tempo real
+        Button:
+            text: "🌐  Dados ao Vivo (Banco Mundial)"
+            font_size: dp(15)
+            bold: True
+            background_color: 0, 0, 0, 0
+            color: 0.93, 0.94, 0.96, 1
+            on_release: app.go_live_select()
+            canvas.before:
+                Color:
+                    rgba: 0.10, 0.28, 0.38, 1
                 RoundedRectangle:
                     pos: self.pos
                     size: self.size
@@ -580,6 +602,63 @@ class ModeloSApp(App):
     def show_results(self, dados: PaisData):
         self.results_screen.show(dados)
         self.sm.current = "results"
+
+    # ── Dados ao Vivo ─────────────────────────────────────────────
+    def go_live_select(self):
+        """Abre popup para escolher qual país buscar em tempo real."""
+        content = BoxLayout(orientation="vertical", spacing=dp(10),
+                            padding=dp(14))
+        content.add_widget(Label(
+            text="Buscar dados em tempo real\n(Banco Mundial)",
+            color=WHITE, font_size=dp(14), halign="center",
+            size_hint_y=None, height=dp(50)))
+
+        popup = Popup(title="Dados ao Vivo",
+                      content=content,
+                      size_hint=(0.85, 0.55),
+                      background_color=(0.05, 0.11, 0.17, 1))
+
+        for nome in ("Brasil", "Alemanha", "Venezuela"):
+            btn = StyledButton(text=nome, color=BLUE,
+                               size_hint_y=None, height=dp(46))
+            btn.bind(on_release=lambda *_, n=nome.lower(), p=popup: (
+                p.dismiss(), self._fetch_live(n)))
+            content.add_widget(btn)
+
+        btn_cancel = Button(text="Cancelar", background_color=(0, 0, 0, 0),
+                            color=(*GRAY[:3], 1), font_size=dp(14),
+                            size_hint_y=None, height=dp(36))
+        btn_cancel.bind(on_release=popup.dismiss)
+        content.add_widget(btn_cancel)
+        popup.open()
+
+    def _fetch_live(self, nome: str):
+        """Mostra loading e busca dados em background."""
+        loading = Popup(
+            title=f"Buscando {nome.title()}…",
+            content=Label(
+                text="Conectando ao Banco Mundial…\nAguarde alguns segundos.",
+                color=WHITE, halign="center", font_size=dp(14)),
+            size_hint=(0.8, 0.35),
+            background_color=(0.05, 0.11, 0.17, 1),
+            auto_dismiss=False)
+        loading.open()
+
+        def _ok(dados: PaisData):
+            Clock.schedule_once(lambda dt: (loading.dismiss(),
+                                            self.show_results(dados)))
+
+        def _err(msg: str):
+            Clock.schedule_once(lambda dt: (
+                loading.dismiss(),
+                Popup(title="Erro de conexão",
+                      content=Label(text=f"Não foi possível obter dados:\n{msg}",
+                                    color=WHITE, halign="center",
+                                    font_size=dp(13)),
+                      size_hint=(0.85, 0.4),
+                      background_color=(0.2, 0.05, 0.05, 1)).open()))
+
+        buscar_pais_async(nome, _ok, _err)
 
 
 if __name__ == "__main__":
