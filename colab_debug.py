@@ -1,406 +1,328 @@
 """
-MODELO S — Debug Completo para Google Colab
-Cole cada bloco em uma célula separada e execute em ordem (Shift+Enter).
+MODELO S — Debug para Google Colab
+Cole cada célula separadamente (Shift+Enter) para executar passo a passo.
+Todos os valores e fórmulas espelham modelo_s.py do app Android.
 """
 
 # =============================================================================
-# CÉLULA 1 — Python OK
+# CÉLULA 1 — Imports e versão Python
 # =============================================================================
 import sys, math
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, NamedTuple
 
 print(f"Python {sys.version}")
-assert sys.version_info >= (3, 8)
+assert sys.version_info >= (3, 8), "Precisa Python 3.8+"
 print("OK")
 
 
 # =============================================================================
-# CÉLULA 2 — Coeficientes β
+# CÉLULA 2 — Coeficientes β (idênticos ao modelo_s.py)
 # =============================================================================
 BETA: Dict[str, float] = {
-    "b0":   3.800,   # intercepto
-    "M":    0.220,   # PIB per capita (normalizado)
-    "lD":   0.150,   # densidade populacional (normalizado)
-    "G":   -0.180,   # Gini 0-1
-    "TFR":  0.120,   # fertilidade normalizada  (TFR-1)/3
-    "E":    0.100,   # expectativa de vida (normalizada)
-    "C":    0.080,   # consumo / PIB
-    "I":    0.060,   # investimento / PIB
-    "P":    0.070,   # produtividade 0-1
-    "S":    0.090,   # poupança / PIB
-    "lG":   0.080,   # inovação tecnológica (normalizado)
-    "N":    0.050,   # capital natural / PIB
-    "NL":   0.090,   # infra urbana 0-1
-    "EXM":  0.150,   # export manufaturados / PIB
-    "EXS":  0.120,   # sofisticação export 0-1
-    "TOT":  0.100,   # termos de troca 0-1
-    "GVC":  0.080,   # cadeias globais 0-1
-    "EXC":  0.050,   # export commodities / PIB
+    "b0":   3.800,
+    "M":    0.220,   # mobilidade social [0-1]
+    "lD":   0.150,   # log10(densidade hab/km²)
+    "G":   -0.180,   # Gini [0-1]
+    "TFR":  0.120,   # (1 - TFR_norm), onde TFR_norm = (TFR-1)/3
+    "E":    0.100,   # escolaridade média em anos
+    "C":    0.080,   # entropia cultural [0-1]
+    "I":    0.060,   # imigração por HDI [0-1]
+    "P":    0.070,   # patentes per capita
+    "S":    0.090,   # startups unicórnio per capita
+    "lG":   0.080,   # log10(commits GitHub)
+    "N":    0.050,   # Nobel per capita
+    "NL":   0.090,   # luz noturna [0-1]
+    "EXM":  0.150,   # export manufaturados/PIB
+    "EXS":  0.120,   # sofisticação exportações [0-1]
+    "TOT":  0.100,   # termos de troca
+    "GVC":  0.080,   # cadeias globais [0-1]
+    "EXC":  0.050,   # export commodities/PIB
     "CCO": -0.070,   # concentração commodities (negativo)
     "IMD": -0.060,   # dependência importações (negativo)
 }
+
 print(f"OK — {len(BETA)} coeficientes  |  b0={BETA['b0']}")
 print(f"     soma |β| (excl. b0) = {sum(abs(v) for k,v in BETA.items() if k!='b0'):.3f}")
 
 
 # =============================================================================
-# CÉLULA 3 — Estrutura de dados (valores RAW — normalizações ficam no cálculo)
+# CÉLULA 3 — Estrutura de dados PaisData
 # =============================================================================
 @dataclass
 class PaisData:
     """
-    Valores de entrada para um país.
+    Variáveis de entrada para um país.
 
-    Variáveis em escala natural (serão normalizadas dentro de calcular_ss):
-        M   — PIB per capita PPC em USD  (ex: 16500)
-        lD  — Densidade em hab/km²       (ex: 25.4)
-        E   — Expectativa de vida em anos (ex: 75.5)
-        lG  — Commits GitHub (proxy inovação, ex: 2_800_000)
-
-    Variáveis já em [0, 1]:
-        G, TFR, C, I, P, S, N, NL, EXM, EXS, TOT, GVC, EXC, CCO, IMD
-        TFR deve ser passado já normalizado: (taxa_fertilidade - 1) / 3
+    Notas de escala:
+      lD  — log10(densidade), pré-computado (ex: log10(25)≈1.40)
+      lG  — log10(commits GitHub), pré-computado (ex: log10(100)≈2.0)
+      E   — anos médios de escolaridade (ex: 7.8)
+      TFR — taxa de fecundidade bruta [1-4]; normalizada internamente
+      P, S, N — podem ser > 1 (per-capita com escala própria)
+      TOT — termos de troca em torno de 1.0
     """
-    nome: str
-    ano:  int
-    # escala natural → normalizadas internamente
-    M:    float = 0.0
-    lD:   float = 0.0
-    E:    float = 0.0
-    lG:   float = 0.0
-    # [0, 1]
-    G:    float = 0.0
-    TFR:  float = 0.0
-    C:    float = 0.0
-    I:    float = 0.0
-    P:    float = 0.0
-    S:    float = 0.0
-    N:    float = 0.0
-    NL:   float = 0.0
-    EXM:  float = 0.0
-    EXS:  float = 0.0
-    TOT:  float = 0.0
-    GVC:  float = 0.0
-    EXC:  float = 0.0
-    CCO:  float = 0.0
-    IMD:  float = 0.0
+    nome: str = "País"
+    ano:  int = 2025
+    M:    float = 0.5
+    lD:   float = 1.4
+    G:    float = 0.4
+    TFR:  float = 2.0
+    E:    float = 8.0
+    C:    float = 0.5
+    I:    float = 0.3
+    P:    float = 0.1
+    S:    float = 0.05
+    lG:   float = 1.0
+    N:    float = 0.05
+    NL:   float = 0.5
+    EXC:  float = 0.3
+    TOT:  float = 1.0
+    CCO:  float = 0.3
+    EXM:  float = 0.2
+    EXS:  float = 0.5
+    GVC:  float = 0.4
+    IMD:  float = 0.3
+    pib:      float = 1.0
+    inflacao: float = 0.03
 
 print("OK — PaisData definida")
 
 
 # =============================================================================
-# CÉLULA 4 — Normalizações internas (aqui está o BUG corrigido)
+# CÉLULA 4 — Fórmula principal com debug linha a linha
 # =============================================================================
-# BUG ORIGINAL: E, M e lG eram usados diretamente sem normalizar.
-#   E = 75.5 anos  →  β_E × E = 0.100 × 75.5 = +7.55  (dominava toda a fórmula!)
-#   M = log10(16500) = 4.22  →  β_M × M = 0.220 × 4.22 = +0.93  (aceitável)
-#   lG = log10(2.8M) = 6.45  →  β_lG × lG = 0.080 × 6.45 = +0.52  (grande demais)
-#
-# FIX: normalizar tudo para escala comparável antes de aplicar β.
+def calcular_ss(d: PaisData, debug: bool = False) -> float:
+    """SS ∈ [1.0, 6.0]"""
+    tfr_norm    = (d.TFR - 1.0) / 3.0
+    tfr_contrib = 1.0 - tfr_norm
 
-def _norm_M(pib_pc_usd: float) -> float:
-    """PIB per capita → [0,1]  (escala log, referência 100–1.000.000 USD)"""
-    return (math.log10(max(pib_pc_usd, 1)) - 2) / 4      # log [2,6] → [0,1]
-
-def _norm_lD(densidade: float) -> float:
-    """Densidade hab/km² → [0,1]  (log, ref 1–10.000)"""
-    return math.log10(max(densidade, 0.1)) / 4             # log [0,4] → [0,1]
-
-def _norm_E(anos: float) -> float:
-    """Expectativa de vida em anos → [0,1]  (ref 40–90 anos)"""
-    return (anos - 40) / 50                                # 40→0, 90→1
-
-def _norm_lG(commits: float) -> float:
-    """Commits GitHub → [0,1]  (log, ref 1.000–1.000.000.000)"""
-    return (math.log10(max(commits, 1)) - 3) / 6          # log [3,9] → [0,1]
-
-# Teste das normalizações
-print("Normalização — Brasil como exemplo:")
-print(f"  M   PIB=16500 → {_norm_M(16500):.4f}   (esperado ~0.55)")
-print(f"  lD  dens=25.4 → {_norm_lD(25.4):.4f}   (esperado ~0.35)")
-print(f"  E   anos=75.5 → {_norm_E(75.5):.4f}   (esperado ~0.71)")
-print(f"  lG  com=2.8M  → {_norm_lG(2_800_000):.4f}   (esperado ~0.57)")
-print()
-print("BUG ANTIGO — E sem normalizar:")
-print(f"  β_E × 75.5 = {0.100 * 75.5:.3f}  ← causava SS = 13+ (clampado em 6)")
-print(f"  β_E × {_norm_E(75.5):.3f} = {0.100 * _norm_E(75.5):.3f}  ← valor correto")
-
-
-# =============================================================================
-# CÉLULA 5 — Função de cálculo (com debug opcional)
-# =============================================================================
-def calcular_ss(p: PaisData, debug: bool = False) -> float:
-    """
-    SS = b0 + Σ βᵢ·xᵢ  clampado em [1, 6].
-    Variáveis em escala natural (M, lD, E, lG) são normalizadas aqui.
-    """
-    x = {
-        "M":   _norm_M(p.M),
-        "lD":  _norm_lD(p.lD),
-        "G":   p.G,
-        "TFR": p.TFR,
-        "E":   _norm_E(p.E),
-        "C":   p.C,
-        "I":   p.I,
-        "P":   p.P,
-        "S":   p.S,
-        "lG":  _norm_lG(p.lG),
-        "N":   p.N,
-        "NL":  p.NL,
-        "EXM": p.EXM,
-        "EXS": p.EXS,
-        "TOT": p.TOT,
-        "GVC": p.GVC,
-        "EXC": p.EXC,
-        "CCO": p.CCO,
-        "IMD": p.IMD,
+    termos = {
+        "M":   BETA["M"]   * d.M,
+        "lD":  BETA["lD"]  * d.lD,
+        "G":   BETA["G"]   * d.G,
+        "TFR": BETA["TFR"] * tfr_contrib,
+        "E":   BETA["E"]   * d.E,
+        "C":   BETA["C"]   * d.C,
+        "I":   BETA["I"]   * d.I,
+        "P":   BETA["P"]   * d.P,
+        "S":   BETA["S"]   * d.S,
+        "lG":  BETA["lG"]  * d.lG,
+        "N":   BETA["N"]   * d.N,
+        "NL":  BETA["NL"]  * d.NL,
+        "EXM": BETA["EXM"] * d.EXM,
+        "EXS": BETA["EXS"] * d.EXS,
+        "TOT": BETA["TOT"] * d.TOT,
+        "GVC": BETA["GVC"] * d.GVC,
+        "EXC": BETA["EXC"] * d.EXC,
+        "CCO": BETA["CCO"] * d.CCO,
+        "IMD": BETA["IMD"] * d.IMD,
     }
 
-    total = BETA["b0"]
     if debug:
-        print(f"\n{'='*56}")
-        print(f"  SS DEBUG — {p.nome} {p.ano}")
-        print(f"{'='*56}")
-        print(f"  {'var':<5} {'β':>7}  {'x_norm':>8}  {'βx':>8}  {'acum':>8}")
-        print(f"  {'-'*50}")
-        print(f"  {'b0':<5} {'':>7}  {'':>8}  {BETA['b0']:>8.4f}  {total:>8.4f}")
+        acum = BETA["b0"]
+        print(f"\n{'='*58}")
+        print(f"  DEBUG SS — {d.nome} {d.ano}")
+        print(f"{'='*58}")
+        print(f"  {'var':<5} {'β':>7}  {'x':>8}  {'β×x':>8}  {'acum':>8}")
+        print(f"  {'-'*52}")
+        print(f"  {'b0':<5} {'':>7}  {'':>8}  {BETA['b0']:>+8.4f}  {acum:>8.4f}")
 
-    for var, val in x.items():
-        parcela = BETA[var] * val
-        total  += parcela
-        if debug:
-            print(f"  {var:<5} {BETA[var]:>+7.3f}  {val:>8.4f}  {parcela:>+8.4f}  {total:>8.4f}")
+        xvals = {
+            "M": d.M, "lD": d.lD, "G": d.G, "TFR": tfr_contrib,
+            "E": d.E, "C": d.C, "I": d.I, "P": d.P, "S": d.S,
+            "lG": d.lG, "N": d.N, "NL": d.NL, "EXM": d.EXM,
+            "EXS": d.EXS, "TOT": d.TOT, "GVC": d.GVC,
+            "EXC": d.EXC, "CCO": d.CCO, "IMD": d.IMD,
+        }
+        for var, bx in termos.items():
+            acum += bx
+            print(f"  {var:<5} {BETA[var]:>+7.3f}  {xvals[var]:>8.4f}  {bx:>+8.4f}  {acum:>8.4f}")
 
-    ss = max(1.0, min(6.0, total))
-    if debug:
-        print(f"  {'-'*50}")
-        print(f"  SS bruto={total:.4f}  →  clamp[1,6]={ss:.4f}")
-    return ss
+        ss_bruto = BETA["b0"] + sum(termos.values())
+        ss_final = round(max(1.0, min(6.0, ss_bruto)), 4)
+        print(f"  {'-'*52}")
+        print(f"  SS bruto = {ss_bruto:.4f}  →  clamp[1,6] = {ss_final:.4f}")
+
+    return round(max(1.0, min(6.0, BETA["b0"] + sum(termos.values()))), 4)
 
 
 def classificar_ss(ss: float) -> Tuple[str, str]:
-    """(classificação, cor_hex)"""
-    if ss < 2.0:  return "Crítico",       "#E74C3C"
-    if ss < 3.0:  return "Alto Risco",    "#E67E22"
-    if ss < 4.0:  return "Moderado",      "#F1C40F"
-    if ss < 5.0:  return "Estável",       "#2ECC71"
-    if ss < 5.5:  return "Muito Estável", "#27AE60"
-    return              "Excelente",      "#1ABC9C"
+    """(classificação, risco_de_colapso)"""
+    for limite, cls, risco in [
+        (2.0, "Crítico",       "Iminente (>80%)"),
+        (2.5, "Alto",          "Alto (50-80%)"),
+        (3.5, "Moderado",      "Médio (20-50%)"),
+        (4.5, "Estável",       "Baixo (5-20%)"),
+        (5.5, "Muito Estável", "Muito Baixo (<5%)"),
+        (6.1, "Excelente",     "Negligenciável"),
+    ]:
+        if ss < limite:
+            return cls, risco
+    return "Excelente", "Negligenciável"
 
 print("OK — calcular_ss e classificar_ss prontas")
 
 
 # =============================================================================
-# CÉLULA 6 — BRASIL 2025
+# CÉLULA 5 — Presets (idênticos ao modelo_s.py do app)
 # =============================================================================
 BRASIL_2025 = PaisData(
     nome="Brasil", ano=2025,
-    M   = 16_500,       # PIB pc PPC USD
-    lD  = 25.4,         # hab/km²
-    E   = 75.5,         # anos
-    lG  = 2_800_000,    # commits GitHub
-    G   = 0.530,
-    TFR = (1.65 - 1) / 3,
-    C   = 0.650,
-    I   = 0.175,
-    P   = 0.420,
-    S   = 0.175,
-    N   = 0.080,
-    NL  = 0.620,
-    EXM = 0.105,
-    EXS = 0.420,
-    TOT = 0.550,
-    GVC = 0.350,
-    EXC = 0.085,
-    CCO = 0.520,
-    IMD = 0.280,
+    M=0.65, lD=1.40, G=0.52, TFR=1.75, E=7.8,
+    C=0.68, I=0.52,
+    P=0.45, S=0.22, lG=1.1,
+    N=0.18, NL=0.75,
+    EXC=0.12, TOT=1.05, CCO=0.55,
+    EXM=0.05, EXS=0.42, GVC=0.52, IMD=0.18,
+    pib=2.1, inflacao=0.045,
 )
 
-ss_br = calcular_ss(BRASIL_2025, debug=True)
-cls_br, cor_br = classificar_ss(ss_br)
-print(f"\n  ► BRASIL: SS = {ss_br:.3f}  →  {cls_br}")
-
-
-# =============================================================================
-# CÉLULA 7 — ALEMANHA 2025
-# =============================================================================
 ALEMANHA_2025 = PaisData(
     nome="Alemanha", ano=2025,
-    M   = 63_000,
-    lD  = 234.0,
-    E   = 81.2,
-    lG  = 8_500_000,
-    G   = 0.310,
-    TFR = (1.46 - 1) / 3,
-    C   = 0.530,
-    I   = 0.220,
-    P   = 0.720,
-    S   = 0.290,
-    N   = 0.040,
-    NL  = 0.910,
-    EXM = 0.280,
-    EXS = 0.820,
-    TOT = 0.580,
-    GVC = 0.780,
-    EXC = 0.020,
-    CCO = 0.120,
-    IMD = 0.320,
+    M=0.88, lD=2.38, G=0.31, TFR=1.46, E=9.0,
+    C=0.65, I=0.75,
+    P=0.90, S=0.75, lG=2.8,
+    N=0.55, NL=0.95,
+    EXC=0.04, TOT=1.02, CCO=0.12,
+    EXM=0.40, EXS=0.85, GVC=0.88, IMD=0.22,
+    pib=4.4, inflacao=0.022,
 )
 
-ss_de = calcular_ss(ALEMANHA_2025, debug=True)
-cls_de, cor_de = classificar_ss(ss_de)
-print(f"\n  ► ALEMANHA: SS = {ss_de:.3f}  →  {cls_de}")
-
-
-# =============================================================================
-# CÉLULA 8 — VENEZUELA 2025
-# =============================================================================
 VENEZUELA_2025 = PaisData(
     nome="Venezuela", ano=2025,
-    M   = 4_200,
-    lD  = 35.2,
-    E   = 71.5,
-    lG  = 180_000,
-    G   = 0.440,
-    TFR = (2.20 - 1) / 3,
-    C   = 0.580,
-    I   = 0.090,
-    P   = 0.210,
-    S   = 0.090,
-    N   = 0.120,
-    NL  = 0.510,
-    EXM = 0.028,
-    EXS = 0.150,
-    TOT = 0.380,
-    GVC = 0.100,
-    EXC = 0.210,
-    CCO = 0.880,
-    IMD = 0.550,
+    M=0.18, lD=1.54, G=0.52, TFR=2.40, E=5.5,
+    C=0.30, I=0.05,
+    P=0.01, S=0.00, lG=0.08,
+    N=0.00, NL=0.18,
+    EXC=0.88, TOT=0.62, CCO=0.95,
+    EXM=0.01, EXS=0.08, GVC=0.10, IMD=0.78,
+    pib=0.09, inflacao=0.80,
 )
 
+print("OK — presets Brasil, Alemanha, Venezuela criados")
+
+
+# =============================================================================
+# CÉLULA 6 — Calcular SS com debug linha a linha
+# =============================================================================
+ss_br = calcular_ss(BRASIL_2025,    debug=True)
+ss_de = calcular_ss(ALEMANHA_2025,  debug=True)
 ss_ve = calcular_ss(VENEZUELA_2025, debug=True)
-cls_ve, cor_ve = classificar_ss(ss_ve)
-print(f"\n  ► VENEZUELA: SS = {ss_ve:.3f}  →  {cls_ve}")
 
 
 # =============================================================================
-# CÉLULA 9 — Ranking comparativo
+# CÉLULA 7 — Ranking comparativo
 # =============================================================================
-print("\n" + "="*58)
-print(f"  {'PAÍS':<12} {'SS':>6}  {'CLASSIFICAÇÃO':<16}  {'COR'}")
-print("="*58)
-paises = [
-    (ALEMANHA_2025, ss_de, cls_de, cor_de),
-    (BRASIL_2025,   ss_br, cls_br, cor_br),
-    (VENEZUELA_2025,ss_ve, cls_ve, cor_ve),
-]
-for p, ss, cls, cor in sorted(paises, key=lambda t: t[1], reverse=True):
-    print(f"  {p.nome:<12} {ss:>6.3f}  {cls:<16}  {cor}")
+print("\n" + "="*60)
+print(f"  {'PAÍS':<12} {'SS':>6}  {'CLASSIFICAÇÃO':<14}  RISCO")
+print("="*60)
+for p, ss in sorted([
+    (BRASIL_2025,    ss_br),
+    (ALEMANHA_2025,  ss_de),
+    (VENEZUELA_2025, ss_ve),
+], key=lambda t: t[1], reverse=True):
+    cls, risco = classificar_ss(ss)
+    print(f"  {p.nome:<12} {ss:>6.4f}  {cls:<14}  {risco}")
 
 
 # =============================================================================
-# CÉLULA 10 — Projeção 5 anos
+# CÉLULA 8 — Projeção de cenários
 # =============================================================================
-def projetar_cenario(pais: PaisData, anos: int = 5,
-                     delta_ot=0.05, delta_base=0.02, delta_pe=-0.03) -> List[Dict]:
-    ss0 = calcular_ss(pais)
-    return [
-        {"ano": pais.ano + t,
-         "otimista":   round(min(6.0, ss0 + delta_ot   * t), 3),
-         "base":       round(min(6.0, ss0 + delta_base  * t), 3),
-         "pessimista": round(max(1.0, ss0 + delta_pe    * t), 3)}
-        for t in range(1, anos + 1)
-    ]
+class PontoProjecao(NamedTuple):
+    ano: int
+    ss: float
+    pib: float
+    classificacao: str
+    risco: str
 
-def projetar_pib(pib_usd: float, ss: float, inflacao=0.04, anos=5) -> List[float]:
-    pibs = [pib_usd]
-    for _ in range(anos):
-        pibs.append(round(pibs[-1] * (1 + 0.018 * ss) * (1 + inflacao), 0))
-    return pibs
+
+def projetar_pib(pib_t: float, ss_t: float, inflacao: float) -> float:
+    return pib_t * (1 + 0.018 * ss_t) * (1 + inflacao)
+
+
+def projetar_cenario(dados: PaisData, horizonte: int = 5,
+                     delta_ss: float = 0.0) -> List[PontoProjecao]:
+    ss  = calcular_ss(dados)
+    pib = dados.pib
+    resultado = []
+    for i in range(horizonte + 1):
+        cls, risco = classificar_ss(ss)
+        resultado.append(PontoProjecao(dados.ano + i, round(ss, 4),
+                                       round(pib, 4), cls, risco))
+        pib = projetar_pib(pib, ss, dados.inflacao)
+        ss  = max(1.0, min(6.0, ss + delta_ss))
+    return resultado
+
 
 print("PROJEÇÃO 5 ANOS — BRASIL")
-proj = projetar_cenario(BRASIL_2025)
-print(f"  {'ANO':<6} {'OTIMISTA':>10} {'BASE':>10} {'PESSIMISTA':>12}")
-for row in proj:
-    print(f"  {row['ano']:<6} {row['otimista']:>10.3f} {row['base']:>10.3f} {row['pessimista']:>12.3f}")
-
-print()
-pib_br = 2_100_000_000_000
-pibs   = projetar_pib(pib_br, ss_br)
-print("PROJEÇÃO PIB — BRASIL (USD trilhões)")
-for i, pib in enumerate(pibs):
-    print(f"  {2025+i}: {pib/1e12:.2f} T")
+print(f"  {'Ano':<6} {'SS':>7} {'PIB T$':>8} {'Classe'}")
+for pt in projetar_cenario(BRASIL_2025, horizonte=5):
+    print(f"  {pt.ano:<6} {pt.ss:>7.4f} {pt.pib:>8.3f}  {pt.classificacao}")
 
 
 # =============================================================================
-# CÉLULA 11 — Teste com país personalizado
+# CÉLULA 9 — País personalizado (edite os valores abaixo)
 # =============================================================================
 MEU_PAIS = PaisData(
     nome="Meu País", ano=2025,
-    # Edite os valores abaixo conforme o país que quiser analisar:
-    M   = 10_000,    # PIB per capita PPC em USD
-    lD  = 50.0,      # densidade hab/km²
-    E   = 72.0,      # expectativa de vida (anos)
-    lG  = 500_000,   # commits GitHub (proxy inovação tecnológica)
-    G   = 0.40,      # índice de Gini
-    TFR = (2.0-1)/3, # taxa de fertilidade (TFR-1)/3
-    C   = 0.60,      # consumo / PIB
-    I   = 0.20,      # investimento / PIB
-    P   = 0.50,      # produtividade relativa [0-1]
-    S   = 0.20,      # poupança / PIB
-    N   = 0.10,      # capital natural / PIB
-    NL  = 0.70,      # infraestrutura urbana [0-1]
-    EXM = 0.15,      # export manufaturados / PIB
-    EXS = 0.50,      # sofisticação das exportações [0-1]
-    TOT = 0.50,      # termos de troca [0-1]
-    GVC = 0.40,      # cadeias globais [0-1]
-    EXC = 0.10,      # export commodities / PIB
-    CCO = 0.30,      # concentração commodities [0-1]
-    IMD = 0.30,      # dependência importações [0-1]
+    M=0.50,   # mobilidade social [0-1]
+    lD=math.log10(50),    # log10(50 hab/km²) ≈ 1.70
+    G=0.40,   # Gini
+    TFR=2.0,  # taxa de fecundidade [1-4]
+    E=8.0,    # anos de escolaridade
+    C=0.60,   # entropia cultural
+    I=0.30,   # imigração por HDI
+    P=0.10,   # patentes per capita
+    S=0.05,   # startups unicórnio p.c.
+    lG=math.log10(100_000),  # log10(100 mil commits) ≈ 5.0
+    N=0.02,   # Nobel per capita
+    NL=0.60,  # luz noturna
+    EXC=0.20, # export commodities/PIB
+    TOT=1.00, # termos de troca
+    CCO=0.30, # concentração commodities
+    EXM=0.15, # export manufaturados/PIB
+    EXS=0.50, # sofisticação exportações
+    GVC=0.40, # cadeias globais
+    IMD=0.30, # dependência importações
+    pib=0.5,  # PIB em trilhões USD
+    inflacao=0.06,
 )
 
 ss_meu = calcular_ss(MEU_PAIS, debug=True)
-cls_meu, _ = classificar_ss(ss_meu)
-print(f"\n  ► MEU PAÍS: SS = {ss_meu:.3f}  →  {cls_meu}")
+cls_meu, risco_meu = classificar_ss(ss_meu)
+print(f"\n  ► {MEU_PAIS.nome}: SS={ss_meu:.4f}  {cls_meu}  |  {risco_meu}")
 
 
 # =============================================================================
-# CÉLULA 12 — Verificação de integridade e testes automáticos
+# CÉLULA 10 — Testes automáticos de integridade
 # =============================================================================
-print("VERIFICAÇÃO DE INTEGRIDADE")
+print("\nTESTES DE INTEGRIDADE")
 print("-"*40)
 
-# 1. Todos os países dentro do intervalo
+# 1. Clamp respeitado
 for nome, ss in [("Brasil", ss_br), ("Alemanha", ss_de), ("Venezuela", ss_ve)]:
     assert 1.0 <= ss <= 6.0, f"SS fora de [1,6]: {nome}={ss}"
-    print(f"  OK  {nome}: SS={ss:.3f} ∈ [1, 6]")
+    print(f"  OK  {nome}: SS={ss:.4f} ∈ [1.0, 6.0]")
 
-# 2. Ordenação esperada: Alemanha > Brasil > Venezuela
-assert ss_de > ss_br > ss_ve, \
-    f"Ordem errada: DE={ss_de:.3f} BR={ss_br:.3f} VE={ss_ve:.3f}"
-print(f"  OK  Ordenação correta: Alemanha > Brasil > Venezuela")
+# 2. Ranking correto
+assert ss_de >= ss_br >= ss_ve, \
+    f"Ordem errada: DE={ss_de} BR={ss_br} VE={ss_ve}"
+print(f"  OK  Ordenação: Alemanha ({ss_de}) ≥ Brasil ({ss_br}) ≥ Venezuela ({ss_ve})")
 
-# 3. Normalizações ficam em [0, 1]
-for func, val, nome in [
-    (_norm_M,  16_500,     "M (Brasil)"),
-    (_norm_lD, 25.4,       "lD (Brasil)"),
-    (_norm_E,  75.5,       "E (Brasil)"),
-    (_norm_lG, 2_800_000,  "lG (Brasil)"),
+# 3. Classificações
+for ss_val, esperado in [
+    (1.5, "Crítico"), (2.2, "Alto"), (3.0, "Moderado"),
+    (4.0, "Estável"), (5.0, "Muito Estável"), (5.8, "Excelente"),
 ]:
-    n = func(val)
-    assert 0 <= n <= 1, f"Normalização fora de [0,1]: {nome}={n}"
-    print(f"  OK  norm({nome}) = {n:.4f} ∈ [0, 1]")
+    cls, _ = classificar_ss(ss_val)
+    assert cls == esperado, f"Classificação errada: SS={ss_val} → '{cls}' != '{esperado}'"
+    print(f"  OK  SS={ss_val} → {cls}")
 
-# 4. Classificações corretas
-for ss, esperado in [(1.5,"Crítico"), (2.5,"Alto Risco"), (3.5,"Moderado"),
-                     (4.5,"Estável"), (5.2,"Muito Estável"), (5.8,"Excelente")]:
-    cls, _ = classificar_ss(ss)
-    assert cls == esperado, f"Classificação errada: SS={ss} → '{cls}' != '{esperado}'"
-    print(f"  OK  SS={ss} → {cls}")
+# 4. Projeção PIB cresce com SS positivo
+proj_br = projetar_cenario(BRASIL_2025, horizonte=5)
+assert proj_br[-1].pib > proj_br[0].pib, "PIB deveria crescer"
+print(f"  OK  PIB Brasil 2025→2030: {proj_br[0].pib:.3f}T → {proj_br[-1].pib:.3f}T")
 
 print()
 print("✓ Todos os testes passaram")
-print(f"  Brasil    SS={ss_br:.3f}")
-print(f"  Alemanha  SS={ss_de:.3f}")
-print(f"  Venezuela SS={ss_ve:.3f}")

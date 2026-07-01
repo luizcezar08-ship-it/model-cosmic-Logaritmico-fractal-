@@ -94,17 +94,16 @@ class PaisData:
 # ---------- Funções puras do modelo ----------
 
 def calcular_ss(d: PaisData) -> float:
-    """Calcula o Índice de Estabilidade Socioeconômica (SS).
+    """Calcula o Índice de Estabilidade Socioeconômica (SS) em [1.0, 6.0].
 
-    Convenções do documento:
-      lD  → já é log10(densidade), fornecido diretamente
-      lG  → já é log(commits), fornecido diretamente
-      E   → anos de escolaridade usados sem normalização (β·E direto)
-      TFR → normalizado internamente: tfr_norm = (TFR-1)/3; contribuição = β·(1-tfr_norm)
-      EXS → escala 0-1 (normalizar antes se vier em 0-100)
+    Convenções:
+      lD  → log10(densidade) pré-computado
+      lG  → log10(commits GitHub) pré-computado
+      E   → anos de escolaridade [0-15], usado diretamente
+      TFR → taxa bruta [1-4], normalizada internamente
     """
-    tfr_norm = (d.TFR - 1.0) / 3.0          # mapeia [1,4] → [0,1]
-    tfr_contrib = 1.0 - tfr_norm              # baixa fecundidade → valor alto
+    tfr_norm    = (d.TFR - 1.0) / 3.0    # [1,4] → [0,1]
+    tfr_contrib = 1.0 - tfr_norm           # baixa fecundidade = valor alto
 
     ss = (
         BETA["b0"]
@@ -112,7 +111,7 @@ def calcular_ss(d: PaisData) -> float:
         + BETA["lD"]  * d.lD
         + BETA["G"]   * d.G
         + BETA["TFR"] * tfr_contrib
-        + BETA["E"]   * d.E            # anos direto, ex: 7.8 → contribui 0.78
+        + BETA["E"]   * d.E
         + BETA["C"]   * d.C
         + BETA["I"]   * d.I
         + BETA["P"]   * d.P
@@ -128,7 +127,7 @@ def calcular_ss(d: PaisData) -> float:
         + BETA["CCO"] * d.CCO
         + BETA["IMD"] * d.IMD
     )
-    return round(ss, 4)
+    return round(max(1.0, min(6.0, ss)), 4)
 
 
 def projetar_pib(pib_t: float, ss_t: float, inflacao: float) -> float:
@@ -239,37 +238,36 @@ def relatorio(dados: PaisData, horizonte: int = 5) -> str:
 
 # ---------- Dados de exemplo ----------
 
-# Valores alinhados com o exemplo do documento (SS_Brasil ≈ 3.20)
 BRASIL_2025 = PaisData(
     nome="Brasil", ano=2025,
-    M=0.65, lD=1.20, G=0.52, TFR=1.75, E=7.8,
-    C=0.68, I=0.72,
-    P=0.45, S=0.32, lG=1.1,
-    N=0.28, NL=0.85,
-    EXC=0.12, TOT=1.1, CCO=0.65,
-    EXM=0.05, EXS=0.42, GVC=0.72, IMD=0.15,
+    M=0.65, lD=1.40, G=0.52, TFR=1.75, E=7.8,
+    C=0.68, I=0.52,
+    P=0.45, S=0.22, lG=1.1,
+    N=0.18, NL=0.75,
+    EXC=0.12, TOT=1.05, CCO=0.55,
+    EXM=0.05, EXS=0.42, GVC=0.52, IMD=0.18,
     pib=2.1, inflacao=0.045,
 )
 
 ALEMANHA_2025 = PaisData(
     nome="Alemanha", ano=2025,
-    M=0.82, lD=2.38, G=0.31, TFR=1.55, E=13.2,   # log10(240)≈2.38
-    C=0.60, I=0.65,
-    P=2.10, S=0.85, lG=8.5,
-    N=1.20, NL=0.95,
-    EXC=0.04, TOT=1.05, CCO=0.12,
+    M=0.88, lD=2.38, G=0.31, TFR=1.46, E=9.0,    # log10(240)≈2.38; E = anos escolaridade
+    C=0.65, I=0.75,
+    P=0.90, S=0.75, lG=2.8,
+    N=0.55, NL=0.95,
+    EXC=0.04, TOT=1.02, CCO=0.12,
     EXM=0.40, EXS=0.85, GVC=0.88, IMD=0.22,
-    pib=4.4, inflacao=0.025,
+    pib=4.4, inflacao=0.022,
 )
 
 VENEZUELA_2025 = PaisData(
     nome="Venezuela", ano=2025,
-    M=0.20, lD=1.54, G=0.44, TFR=2.30, E=6.5,    # log10(35)≈1.54
-    C=0.55, I=0.10,
-    P=0.01, S=0.00, lG=0.1,
-    N=0.01, NL=0.20,
-    EXC=0.85, TOT=0.75, CCO=0.92,
-    EXM=0.02, EXS=0.10, GVC=0.15, IMD=0.65,
+    M=0.18, lD=1.54, G=0.52, TFR=2.40, E=5.5,    # log10(35)≈1.54; crise econômica severa
+    C=0.30, I=0.05,
+    P=0.01, S=0.00, lG=0.08,
+    N=0.00, NL=0.18,
+    EXC=0.88, TOT=0.62, CCO=0.95,
+    EXM=0.01, EXS=0.08, GVC=0.10, IMD=0.78,
     pib=0.09, inflacao=0.80,
 )
 
